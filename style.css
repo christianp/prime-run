@@ -1,0 +1,143 @@
+:root {
+    --main-bg: hsl(90,60%,90%);
+    --button-bg: 240;
+    --font-size: 24px;
+    --margin: 1rem 0;
+}
+
+html {
+    font-size: var(--font-size);
+    font-family: monospace;
+}
+header {
+    text-align: center;
+}
+
+footer {
+    margin-top: 5em;
+    font-size: 0.9rem;
+    text-align: right;
+    padding: 1em;
+}
+
+h1, h2, p, ul {
+    margin: var(--margin);
+}
+  
+#controls {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: 1fr 1fr;
+  grid-gap: 1em;
+}
+#to-intro {
+    --button-bg: 180;
+}
+#start-again {
+    padding: 0.1em 1em;
+    justify-self: start;
+}
+
+body {
+    background: var(--main-bg);
+}
+
+.state {
+    display: grid;
+    grid-auto-flow: column dense;
+    grid-auto-columns: max-content;
+    grid-gap: 0.5em 1em;
+    justify-items: end;
+}
+.state .text {
+    font-weight: bold;
+}
+.state .target {
+    grid-row: 1;
+}
+.state .history {
+    grid-row: 2;
+}
+.state .change {
+    grid-row: 3;
+}
+.state .history:not(.current), .state .change {
+    opacity: 0.5;
+    font-size: 0.9em;
+    align-self: end;
+}
+
+#factors {
+    padding: 0;
+    display: grid;
+    grid-auto-flow: row;
+    list-style: none;
+    grid-auto-columns: max-content;
+    grid-template-columns: repeat(auto-fill,6em);
+    grid-gap: 0 1em;
+    justify-items: center;
+}
+
+li.factor > ul {
+    padding: 0;
+    list-style: none;
+}
+
+#game {
+    --margin: 0 0 0.5em 0;
+}
+#game, #intro {
+    display: grid;
+    justify-content: center;
+    grid-gap: 1em;
+    justify-items: center;
+    grid-template-columns: 40rem;
+    margin: 0 1em;
+}
+#game > * {
+    width: 100%;
+    overflow-x: auto;
+}
+.factor {
+    text-align: center;
+}
+button {
+    padding: 0.5em 1em;
+    background-color: hsl(var(--button-bg),50%,80%);
+    border: none;
+    font-size: 1em;
+    font-family: inherit;
+    width: 100%;
+}
+button:hover, button:focus {
+    background-color: hsl(var(--button-bg),50%,65%);
+}
+button:active {
+    background-color: hsl(var(--button-bg),50%,30%);
+    color: white;
+}
+.factor li.more button {
+    --button-bg: 120;
+}
+.factor li.less button {
+    --button-bg: 0;
+}
+
+.factor li ~ li {
+    margin-top: 0.5em;
+}
+
+#steps.success {
+    font-weight: bold;
+    font-size: 1.3em;
+    text-align: center;
+}
+
+@media screen and (max-width: 960px) {
+    :root {
+        font-size: calc(24/720*100vw);
+    }
+    #game, #intro {
+        grid-template-columns: 1fr;
+    }
+}
