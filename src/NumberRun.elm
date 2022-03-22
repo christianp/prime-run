@@ -1,4 +1,4 @@
-module NumberRun exposing (..)
+port module NumberRun exposing (..)
 
 import Browser
 import Html as H exposing (Html, div, button, ul, li, span, text, p)
@@ -9,6 +9,11 @@ import Random
 import Set exposing (Set)
 import Tuple exposing (pair, first, second)
 
+calculate_distances = False
+
+port calculateDistance : (Int,Int) -> Cmd msg
+port receiveDistance : (Int -> msg) -> Sub msg
+
 type Screen
     = IntroScreen
     | GameScreen
@@ -18,6 +23,7 @@ type alias GameModel =
     , target : Int
     , history: List Int
     , primes : List Int
+    , min_distance : Maybe Int
     }
 
 type alias Model =
@@ -34,11 +40,13 @@ type GameMsg
     | Start Int Int
     | StartAgain
     | GoToIntro
+    | Undo
+    | ReceiveDistance Int
 
 main = Browser.element
     { init = init
     , update = update
-    , subscriptions = \_ -> Sub.none
+    , subscriptions = \_ -> receiveDistance (ReceiveDistance >> GameMsg)
     , view = view
     }
 
@@ -92,6 +100,7 @@ init _ =
           , target = 1
           , history = []
           , primes = [3,2]
+          , min_distance = Nothing
           }
       , screen = IntroScreen
       }
@@ -130,14 +139,29 @@ update_game msg model = case msg of
         let
             (tprime, p1) = is_prime model.primes target
             (cprime, p2) = is_prime p1 current
+            cmd = 
+                if tprime || current==target then 
+                    pick_target 
+                else if calculate_distances then 
+                    (calculateDistance (current,target)) 
+                else 
+                    Cmd.none
         in
-            ({ model | target = target, current = current, history = [], primes = p2 }, if tprime || current==target then pick_target else Cmd.none)
+            ({ model | target = target, current = current, history = [], min_distance = Nothing, primes = p2 }, cmd)
     MoveTo i -> 
         ( if i == model.current then model else { model | current = i, history=model.current::model.history }
         , Cmd.none
         )
     StartAgain -> (model, pick_target)
     GoToIntro -> (model, Cmd.none)
+    Undo -> case List.head model.history of
+        Just x -> ({ model | current = x, history = List.drop 1 model.history }, Cmd.none)
+        Nothing -> (model, Cmd.none)
+    ReceiveDistance d -> 
+        let
+            q = Debug.log "receive distance" d
+        in
+            ({ model | min_distance = Just d }, Cmd.none)
 
 fi = String.fromInt
 strf : String -> List String -> String
@@ -206,7 +230,10 @@ view_game model =
                 , view_options model
                 ]
              else
-                []
+                [ HK.ul
+                    [ HA.id "factors" ]
+                    [("undo", button [ HE.onClick Undo, HA.id "undo", HA.disabled (model.history == [])] [text "Undo" ])]
+                ]
             )
         ]
 
@@ -219,6 +246,13 @@ view_steps model =
                 strf "You did it in %!" [step_count]
             else 
                 strf "% so far." [step_count]
+        partext = 
+            let
+                dtext = case model.min_distance of 
+                    Nothing -> "???"
+                    Just d -> fi d
+            in
+                strf " (par: %)" [dtext]
     in
         p
             [ HA.id "steps" 
@@ -226,7 +260,7 @@ view_steps model =
                 [ ("success", model.target == model.current)
                 ]
             ]
-            [ text <| line ]
+            [ text <| line++(if calculate_distances then partext else "") ]
 
 show_prime_factorisation : List Int -> Int -> String
 show_prime_factorisation eprimes n =
@@ -245,7 +279,7 @@ view_target model =
           , div [ HA.class "target" ] [ text <| strf "% = %" [show_prime_factorisation model.primes model.target, fi model.target] ]
  --         , div [ HA.class "target" ] [ text <| " = "++(show_prime_factorisation model.primes model.target) ]
           , div [ HA.class "text history current" ] [ text "Currently" ]
-          , div [ HA.class "history current", HA.attribute "aria-live" "assertive" ] [ text <| fi model.current ]
+          , div [ HA.class "history current", HA.attribute "aria-live" "assertive" ] [ text <| strf "% = %" [show_prime_factorisation model.primes model.current, fi model.current] ]
           ]
         ++(view_history model)
         )
@@ -279,7 +313,10 @@ view_options model =
     in
         HK.ul
             [ HA.id "factors" ]
-            (List.map 
+            (
+                [("undo", button [ HE.onClick Undo, HA.id "undo", HA.disabled (model.history == [])] [text "Undo" ])]
+                ++
+                (List.map 
                 (\p -> 
                     if List.member p factors then
                         (fi p, factor_options model.target model.current p)
@@ -287,6 +324,7 @@ view_options model =
                         (fi p, div [] [])
                 )
                 (List.reverse prime_range)
+                )
             )
 
 factor_options target current f =
