@@ -1,10 +1,12 @@
-port module NumberRun exposing (..)
+port module PrimeRun exposing (..)
 
 import Browser
 import Html as H exposing (Html, div, button, ul, li, span, text, p)
 import Html.Attributes as HA
 import Html.Events as HE
 import Html.Keyed as HK
+import Json.Decode as JD
+import Json.Encode as JE
 import Random
 import Set exposing (Set)
 import Tuple exposing (pair, first, second)
@@ -13,6 +15,26 @@ calculate_distances = False
 
 port calculateDistance : (Int,Int) -> Cmd msg
 port receiveDistance : (Int -> msg) -> Sub msg
+port saveState : JE.Value -> Cmd msg
+
+save : (Model, Cmd msg) -> (Model, Cmd msg)
+save (model, cmd) = (model, Cmd.batch [ saveState (encode_model model), cmd ])
+
+encode_game : GameModel -> JE.Value
+encode_game game =
+    JE.object
+        [ ("current", JE.int game.current)
+        , ("target", JE.int game.target)
+        , ("history", JE.list JE.int game.history)
+        ]
+
+encode_model : Model -> JE.Value
+encode_model model =
+    JE.object
+        [ ("current_level", JE.int model.current_level)
+        , ("max_level", JE.int model.max_level)
+        , ("game", encode_game model.game)
+        ]
 
 type Screen
     = IntroScreen
@@ -20,6 +42,7 @@ type Screen
 
 type alias GameModel = 
     { current : Int
+    , level : Int
     , target : Int
     , history: List Int
     , primes : List Int
@@ -29,17 +52,21 @@ type alias GameModel =
 type alias Model =
     { game : GameModel
     , screen : Screen
+    , current_level : Int
+    , max_level : Int
     }
 
 type Msg
     = GoToGame
+    | GoToIntro
     | GameMsg GameMsg
+    | Start Int Int Int
+    | StartAgain
+    | NextLevel
+    | ChangeLevel (Maybe Int)
 
 type GameMsg
     = MoveTo Int
-    | Start Int Int
-    | StartAgain
-    | GoToIntro
     | Undo
     | ReceiveDistance Int
 
@@ -83,29 +110,89 @@ primes_upto n eprimes =
         else
             step (m+2) eprimes
 
-pick_target : Cmd GameMsg
-pick_target = 
+ln = logBase e
+
+target_bounds ilevel =
     let
-        rcurrent = Random.int 1000 20000
-        rtarget = Random.int 1000 20000
-        msg = Random.map2 Start rtarget rcurrent
+        level_0_high = 100
+        flip_high = 20000
+        early_growth = e^((ln (flip_high/level_0_high))/flip_level)
+        flip_level = 50
+        level = toFloat ilevel
+        fhigh = if ilevel <= flip_level then level_0_high*early_growth^level else (ln (level-(toFloat flip_level)))*3000 + flip_high
+        flow = fhigh/10
+    in
+        (floor fhigh, max 2 (floor flow))
+
+
+pick_target : Int -> Cmd Msg
+pick_target level = 
+    let
+        (high,low) = target_bounds level
+        rcurrent = Random.int low high
+        rtarget = Random.int low high
+        msg = Random.map2 (Start level) rtarget rcurrent
     in
         Random.generate identity msg
 
 
-init : () -> (Model, Cmd Msg)
-init _ = 
+type alias SaveData =
+    { current_level : Int
+    , max_level : Int
+    , game : GameSaveData
+    }
+
+type alias GameSaveData =
+    { target : Int
+    , current : Int
+    , history: List Int
+    }
+
+init : JE.Value -> (Model, Cmd Msg)
+init flags = 
+    let
+        decode_game = JD.map3 
+            GameSaveData
+            (JD.field "target" JD.int)
+            (JD.field "current" JD.int)
+            (JD.field "history" (JD.list JD.int))
+        decode_flags = JD.map3
+            SaveData
+            (JD.field "current_level" JD.int)
+            (JD.field "max_level" JD.int)
+            (JD.field "game" decode_game)
+        default_save =
+            { current_level = 0
+            , max_level = 0 
+            , game =
+                { current = 2
+                , target = 3
+                , history = []
+                }
+            }
+        q = Debug.log "load" (JD.decodeValue decode_flags flags)
+        (save_data,cmd) = case JD.decodeValue decode_flags flags of
+            Ok d -> (d, Cmd.none)
+            _ -> (default_save, pick_target 0)
+
+        game_data = save_data.game
+
+        top_number = Maybe.withDefault 3 <| List.maximum ([game_data.target, game_data.current]++game_data.history)
+    in
     ( { game =
-          { current = 1000 
-          , target = 1
-          , history = []
-          , primes = [3,2]
+          { current = game_data.current
+          , level = save_data.current_level
+          , target = game_data.target
+          , history = game_data.history
+          , primes = primes_upto top_number [3,2]
           , min_distance = Nothing
           }
-      , screen = IntroScreen
+      , screen = if save_data.current_level > 0 || game_data.history /= [] then GameScreen else IntroScreen
+      , current_level = save_data.current_level
+      , max_level = save_data.max_level
       }
     
-    , Cmd.map GameMsg pick_target
+    , cmd
     )
 
 remove_factor a x =
@@ -123,37 +210,45 @@ prime_factors x =
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of
-    GoToGame -> ({ model | screen = GameScreen}, Cmd.none)
-    GameMsg m -> 
-        case m of
-            GoToIntro -> ({ model | screen = IntroScreen}, Cmd.none)
-            _ -> 
-                let
-                    (game, cmd) = update_game m model.game
-                in
-                    ({ model | game = game}, Cmd.map GameMsg cmd)
-
-update_game : GameMsg -> GameModel -> (GameModel, Cmd GameMsg)
-update_game msg model = case msg of
-    Start target current -> 
+    GoToGame -> ({ model | screen = GameScreen}, if model.current_level /= model.game.level then pick_target model.current_level else Cmd.none)
+    StartAgain -> (model, pick_target model.current_level)
+    NextLevel ->
         let
-            (tprime, p1) = is_prime model.primes target
+            level = model.current_level + 1
+        in
+            ({ model | current_level = level, max_level = max model.max_level level }, pick_target level)
+    ChangeLevel ml -> 
+        case ml of
+            Just l -> ({ model | current_level = l }, Cmd.none)
+            Nothing -> (model, Cmd.none)
+    Start level target current -> 
+        let
+            (tprime, p1) = is_prime model.game.primes target
             (cprime, p2) = is_prime p1 current
+            ogame = model.game
+            game = { ogame | level = level, target = target, current = current, history = [], min_distance = Nothing, primes = p2 }
             cmd = 
                 if tprime || current==target then 
-                    pick_target 
+                    pick_target model.current_level
                 else if calculate_distances then 
                     (calculateDistance (current,target)) 
                 else 
                     Cmd.none
         in
-            ({ model | target = target, current = current, history = [], min_distance = Nothing, primes = p2 }, cmd)
+            save ({ model | game = game }, cmd)
+    GoToIntro -> ({ model | screen = IntroScreen}, Cmd.none)
+    GameMsg m -> 
+        let
+            (game, cmd) = update_game m model.game
+        in
+            save ({ model | game = game}, Cmd.map GameMsg cmd)
+
+update_game : GameMsg -> GameModel -> (GameModel, Cmd GameMsg)
+update_game msg model = case msg of
     MoveTo i -> 
         ( if i == model.current then model else { model | current = i, history=model.current::model.history }
         , Cmd.none
         )
-    StartAgain -> (model, pick_target)
-    GoToIntro -> (model, Cmd.none)
     Undo -> case List.head model.history of
         Just x -> ({ model | current = x, history = List.drop 1 model.history }, Cmd.none)
         Nothing -> (model, Cmd.none)
@@ -184,7 +279,7 @@ strf template bits =
 view : Model -> Html Msg
 view model = case model.screen of
     IntroScreen -> view_intro model
-    GameScreen -> H.map GameMsg (view_game model.game)
+    GameScreen -> view_game model.game
 
 view_intro model =
     div
@@ -196,6 +291,7 @@ view_intro model =
                 , "Try to reach the target, by adding or removing any prime factor of your current number."
                 ]
             )
+        , level_selector model
         , button
             [ HA.id "start-game" 
             , HE.onClick GoToGame
@@ -203,8 +299,28 @@ view_intro model =
             [ text "Start the game" ]
         ]
 
+level_selector model =
+    let
+        (high,low) = target_bounds model.current_level
+    in
+        div
+            []
+            [ H.label
+                [ HA.for "level-select"
+                ]
+                [ text "Level" ]
+            , H.input
+                [ HA.type_ "range"
+                , HA.min "0"
+                , HA.max (fi model.max_level)
+                , HA.value (fi model.current_level)
+                , HE.onInput (String.toInt >> ChangeLevel)
+                ]
+                []
+            , text <| fi model.current_level
+            ]
 
-view_game : GameModel -> Html GameMsg
+view_game : GameModel -> Html Msg
 view_game model =
     div
         [ HA.id "game" ]
@@ -215,11 +331,16 @@ view_game model =
                 , HE.onClick GoToIntro
                 ]
                 [ text "How to play" ]
-            , button 
-                [ HA.id "start-again"
-                , HE.onClick StartAgain
-                ]
-                [ text "Start again" ]
+            , if model.current == model.target then
+                button 
+                    [ HA.id "next-level"
+                    , HE.onClick NextLevel
+                    ]
+                    [ text "Next level" ]
+              else
+                 div
+                    [ HA.id "current-level" ]
+                    [ text <| strf "Level %" [fi model.level] ]
             ]
         , view_target model
         , view_steps model
@@ -227,12 +348,12 @@ view_game model =
             [ HA.id "options" ]
             (if model.target /= model.current then
                 [ H.h2 [] [ text "Where next?" ]
-                , view_options model
+                , H.map GameMsg (view_options model)
                 ]
              else
                 [ HK.ul
                     [ HA.id "factors" ]
-                    [("undo", button [ HE.onClick Undo, HA.id "undo", HA.disabled (model.history == [])] [text "Undo" ])]
+                    [("undo", button [ HE.onClick (GameMsg Undo), HA.id "undo", HA.disabled (model.history == [])] [text "Undo" ])]
                 ]
             )
         ]

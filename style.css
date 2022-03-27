@@ -140,6 +140,11 @@ button:active {
     visibility: hidden;
 }
 
+#current-level {
+  justify-self: center;
+  align-self: center;
+}
+
 @media screen and (max-width: 960px) {
     :root {
         font-size: calc(24/720*100vw);
