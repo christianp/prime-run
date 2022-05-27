@@ -114,7 +114,7 @@ ln = logBase e
 
 target_bounds ilevel =
     let
-        level_0_high = 100
+        level_0_high = 1000
         flip_high = 20000
         early_growth = e^((ln (flip_high/level_0_high))/flip_level)
         flip_level = 50
